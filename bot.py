@@ -26,18 +26,24 @@ def format_duration(seconds: int) -> str:
     return f"{m}:{s:02d}"
 
 
+# 🔹 PROFESSIONAL START MESSAGE
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🎵 Music Downloader Bot\n\n"
-        "You can:\n"
-        "• Send a song name (select from results)\n"
-        "• Or paste a YouTube link (direct download)\n"
+        "🎵 **Music Downloader Bot**\n\n"
+        "Download high-quality audio directly from YouTube.\n\n"
+        "**How to use:**\n"
+        "• Send a song name → choose from results\n"
+        "• Paste a YouTube link → instant download\n\n"
+        "Fast • Clean • Simple\n",
+        parse_mode="Markdown"
     )
 
 
 async def song(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.message.text.strip()
-    await update.message.reply_text("🔍 Processing...")
+
+    # 🔍 Processing message (store it)
+    processing_msg = await update.message.reply_text("🔍 Processing...")
 
     ydl_opts = {
         "format": "bestaudio/best",
@@ -50,13 +56,18 @@ async def song(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 🔗 DIRECT YOUTUBE LINK
         if is_youtube_link(query):
             info = ydl.extract_info(query, download=True)
+
+            # ❌ Remove processing
+            await processing_msg.delete()
+
             await send_audio(update.message, info, ydl)
             return
 
-        # 🔍 SONG NAME SEARCH (MULTIPLE RESULTS)
+        # 🔍 SONG NAME SEARCH
         info = ydl.extract_info(f"ytsearch5:{query}", download=False)
 
         if not info.get("entries"):
+            await processing_msg.delete()
             await update.message.reply_text(
                 "❌ No results found.\nPlease try a different song name."
             )
@@ -68,16 +79,20 @@ async def song(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for i, entry in enumerate(info["entries"]):
             title = entry.get("title", "Unknown Title")
             buttons.append([
-                InlineKeyboardButton(
-                    text=f"{title}",
-                    callback_data=str(i)
-                )
+                InlineKeyboardButton(text=title, callback_data=str(i))
             ])
 
-        await update.message.reply_text(
-            "🎧 Select a song:",
-            reply_markup=InlineKeyboardMarkup(buttons)
+        # ❌ Remove processing before showing results
+        await processing_msg.delete()
+
+        # 🎧 Result message (store for deletion later)
+        results_msg = await update.message.reply_text(
+            "🎧 **Select a song:**",
+            reply_markup=InlineKeyboardMarkup(buttons),
+            parse_mode="Markdown"
         )
+
+        context.user_data["results_msg_id"] = results_msg.message_id
 
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -93,6 +108,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "quiet": True
     }
 
+    # ❌ Delete result list message
+    try:
+        await query.message.delete()
+    except:
+        pass
+
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(entry["webpage_url"], download=True)
         await send_audio(query.message, info, ydl)
@@ -106,10 +127,11 @@ async def send_audio(message, info, ydl):
     duration = format_duration(info.get("duration"))
 
     await message.reply_text(
-        f"🎵 {title}\n"
+        f"🎵 **{title}**\n"
         f"👤 {artist}\n"
         f"⏱ Duration: {duration}\n\n"
-        f"⬇️ Downloading audio..."
+        f"⬇️ Downloading audio...",
+        parse_mode="Markdown"
     )
 
     await message.reply_audio(
