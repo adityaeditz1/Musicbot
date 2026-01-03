@@ -1,8 +1,9 @@
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     MessageHandler,
+    CallbackQueryHandler,
     ContextTypes,
     filters
 )
@@ -10,7 +11,7 @@ import yt_dlp
 import os
 import re
 
-# TOKEN from environment variable
+# BOT TOKEN from environment
 TOKEN = os.getenv("BOT_TOKEN")
 
 
@@ -21,19 +22,16 @@ def is_youtube_link(text: str) -> bool:
 def format_duration(seconds: int) -> str:
     if not seconds:
         return "Unknown"
-    minutes = seconds // 60
-    sec = seconds % 60
-    return f"{minutes}:{sec:02d}"
+    m, s = divmod(seconds, 60)
+    return f"{m}:{s:02d}"
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🎵 Music Downloader Bot\n\n"
-        "This bot lets you download high-quality audio from YouTube.\n\n"
         "You can:\n"
-        "• Send a song name\n"
-        "• Or paste a YouTube link\n\n"
-        "The bot will fetch the best available audio."
+        "• Send a song name (select from results)\n"
+        "• Or paste a YouTube link (direct download)\n"
     )
 
 
@@ -43,58 +41,84 @@ async def song(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     ydl_opts = {
         "format": "bestaudio/best",
-        "outtmpl": "%(title)s.%(ext)s",
         "quiet": True,
         "noplaylist": True
     }
 
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
 
-            # 🔗 If YouTube link
-            if is_youtube_link(query):
-                info = ydl.extract_info(query, download=True)
-                entry = info
+        # 🔗 DIRECT YOUTUBE LINK
+        if is_youtube_link(query):
+            info = ydl.extract_info(query, download=True)
+            await send_audio(update.message, info, ydl)
+            return
 
-            # 🔍 If song name
-            else:
-                info = ydl.extract_info(f"ytsearch1:{query}", download=True)
+        # 🔍 SONG NAME SEARCH (MULTIPLE RESULTS)
+        info = ydl.extract_info(f"ytsearch5:{query}", download=False)
 
-                if not info.get("entries"):
-                    await update.message.reply_text(
-                        "❌ No results found.\n"
-                        "Please try a different song name."
-                    )
-                    return
+        if not info.get("entries"):
+            await update.message.reply_text(
+                "❌ No results found.\nPlease try a different song name."
+            )
+            return
 
-                entry = info["entries"][0]
+        context.user_data["results"] = info["entries"]
 
-            file_path = ydl.prepare_filename(entry)
-
+        buttons = []
+        for i, entry in enumerate(info["entries"]):
             title = entry.get("title", "Unknown Title")
-            artist = entry.get("uploader", "Unknown Artist")
-            duration = format_duration(entry.get("duration"))
+            buttons.append([
+                InlineKeyboardButton(
+                    text=f"{title}",
+                    callback_data=str(i)
+                )
+            ])
 
-        # ℹ️ Show info BEFORE sending audio
         await update.message.reply_text(
-            f"🎵 *{title}*\n"
-            f"👤 {artist}\n"
-            f"⏱ Duration: {duration}\n\n"
-            f"⬇️ Downloading audio...",
-            parse_mode="Markdown"
+            "🎧 Select a song:",
+            reply_markup=InlineKeyboardMarkup(buttons)
         )
 
-        await update.message.reply_audio(
-            audio=open(file_path, "rb"),
-            title=title,
-            performer=artist
-        )
 
-        os.remove(file_path)
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
 
-    except Exception as e:
-        await update.message.reply_text("❌ Something went wrong. Please try again later.")
-        print(e)
+    index = int(query.data)
+    entry = context.user_data["results"][index]
+
+    ydl_opts = {
+        "format": "bestaudio/best",
+        "outtmpl": "%(title)s.%(ext)s",
+        "quiet": True
+    }
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(entry["webpage_url"], download=True)
+        await send_audio(query.message, info, ydl)
+
+
+async def send_audio(message, info, ydl):
+    file_path = ydl.prepare_filename(info)
+
+    title = info.get("title", "Unknown Title")
+    artist = info.get("uploader", "Unknown Artist")
+    duration = format_duration(info.get("duration"))
+
+    await message.reply_text(
+        f"🎵 {title}\n"
+        f"👤 {artist}\n"
+        f"⏱ Duration: {duration}\n\n"
+        f"⬇️ Downloading audio..."
+    )
+
+    await message.reply_audio(
+        audio=open(file_path, "rb"),
+        title=title,
+        performer=artist
+    )
+
+    os.remove(file_path)
 
 
 def main():
@@ -106,6 +130,7 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, song))
+    app.add_handler(CallbackQueryHandler(button_handler))
 
     print("Bot running...")
     app.run_polling()
