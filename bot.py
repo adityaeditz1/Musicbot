@@ -17,6 +17,8 @@ TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = 1721427995
 USERS_FILE = "users.txt"
 
+# Termux specific ffmpeg path fix
+FFMPEG_PATH = "/data/data/com.termux/files/usr/bin"
 
 def is_youtube_link(text: str) -> bool:
     return bool(re.search(r"(youtube\.com|youtu\.be)", text))
@@ -83,12 +85,12 @@ async def song(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.message.text.strip()
     processing_msg = await update.message.reply_text("🔍 Processing...")
 
-    # Options for searching and extraction
     ydl_opts = {
         "format": "bestaudio/best",
         "quiet": True,
         "noplaylist": True,
-        "outtmpl": "song_%(id)s.%(ext)s", # Clean filename to avoid issues
+        "outtmpl": "song_%(id)s.%(ext)s",
+        "ffmpeg_location": FFMPEG_PATH, # Added manually to fix your error
         "postprocessors": [{
             "key": "FFmpegExtractAudio",
             "preferredcodec": "mp3",
@@ -225,6 +227,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "format": "bestaudio/best",
             "outtmpl": "song_%(id)s.%(ext)s",
             "quiet": True,
+            "ffmpeg_location": FFMPEG_PATH, # Added manually to fix your error
             "postprocessors": [{
                 "key": "FFmpegExtractAudio",
                 "preferredcodec": "mp3",
@@ -244,13 +247,11 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= SEND AUDIO =================
 
 async def send_audio(message, info, ydl):
-    # This logic ensures we find the .mp3 file even if titles have weird characters
     base_path = ydl.prepare_filename(info)
     file_path = os.path.splitext(base_path)[0] + ".mp3"
 
     try:
         if not os.path.exists(file_path):
-            # Fallback check if outtmpl changed something
             file_path = f"song_{info['id']}.mp3"
 
         if os.path.exists(file_path):
