@@ -17,8 +17,7 @@ TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = 1721427995
 USERS_FILE = "users.txt"
 
-# Termux specific ffmpeg path fix
-FFMPEG_PATH = "/data/data/com.termux/files/usr/bin"
+# Railway handles paths automatically, so we removed manual FFMPEG_PATH
 
 def is_youtube_link(text: str) -> bool:
     return bool(re.search(r"(youtube\.com|youtu\.be)", text))
@@ -90,7 +89,6 @@ async def song(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "quiet": True,
         "noplaylist": True,
         "outtmpl": "song_%(id)s.%(ext)s",
-        "ffmpeg_location": FFMPEG_PATH, # Added manually to fix your error
         "postprocessors": [{
             "key": "FFmpegExtractAudio",
             "preferredcodec": "mp3",
@@ -227,7 +225,6 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "format": "bestaudio/best",
             "outtmpl": "song_%(id)s.%(ext)s",
             "quiet": True,
-            "ffmpeg_location": FFMPEG_PATH, # Added manually to fix your error
             "postprocessors": [{
                 "key": "FFmpegExtractAudio",
                 "preferredcodec": "mp3",
@@ -263,7 +260,7 @@ async def send_audio(message, info, ydl):
             )
             os.remove(file_path)
         else:
-            await message.reply_text("❌ Error: File was not created properly.")
+            await message.reply_text("❌ Error: Audio file creation failed.")
     except Exception as e:
         await message.reply_text(f"❌ Upload error: {str(e)}")
 
@@ -298,7 +295,7 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_router))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, song))
 
-    print("Bot running...")
+    print("Bot running on Cloud...")
     app.run_polling()
 
 
