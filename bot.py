@@ -83,12 +83,12 @@ async def song(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.message.text.strip()
     processing_msg = await update.message.reply_text("🔍 Processing...")
 
-    # UPDATED: Added MP3 conversion settings
+    # Options for searching and extraction
     ydl_opts = {
         "format": "bestaudio/best",
-        "outtmpl": "%(title)s.%(ext)s",
         "quiet": True,
         "noplaylist": True,
+        "outtmpl": "song_%(id)s.%(ext)s", # Clean filename to avoid issues
         "postprocessors": [{
             "key": "FFmpegExtractAudio",
             "preferredcodec": "mp3",
@@ -96,38 +96,40 @@ async def song(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }]
     }
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            if is_youtube_link(query):
+                info = ydl.extract_info(query, download=True)
+                await processing_msg.delete()
+                await send_audio(update.message, info, ydl)
+                return
 
-        if is_youtube_link(query):
-            info = ydl.extract_info(query, download=True)
-            await processing_msg.delete()
-            await send_audio(update.message, info, ydl)
-            return
+            info = ydl.extract_info(f"ytsearch5:{query}", download=False)
 
-        info = ydl.extract_info(f"ytsearch5:{query}", download=False)
+            if not info or not info.get("entries"):
+                await processing_msg.delete()
+                await update.message.reply_text(
+                    "❌ No results found.\nPlease try a different song name."
+                )
+                return
 
-        if not info.get("entries"):
+            context.user_data["results"] = info["entries"]
+
+            buttons = []
+            for i, entry in enumerate(info["entries"]):
+                buttons.append([
+                    InlineKeyboardButton(entry.get("title", "Unknown")[:40], callback_data=f"song_{i}")
+                ])
+
             await processing_msg.delete()
             await update.message.reply_text(
-                "❌ No results found.\nPlease try a different song name."
+                "🎧 **Select a song:**",
+                reply_markup=InlineKeyboardMarkup(buttons),
+                parse_mode="Markdown"
             )
-            return
-
-        context.user_data["results"] = info["entries"]
-
-        buttons = []
-        for i, entry in enumerate(info["entries"]):
-            buttons.append([
-                InlineKeyboardButton(entry.get("title", "Unknown"), callback_data=f"song_{i}")
-            ])
-
-        await processing_msg.delete()
-
-        await update.message.reply_text(
-            "🎧 **Select a song:**",
-            reply_markup=InlineKeyboardMarkup(buttons),
-            parse_mode="Markdown"
-        )
+    except Exception as e:
+        if processing_msg: await processing_msg.delete()
+        await update.message.reply_text(f"❌ An error occurred: {str(e)}")
 
 
 # ================= CALLBACK HANDLER (ALL CALLBACKS HERE) =================
@@ -146,12 +148,10 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 📊 STATISTICS
     if data == "stats":
         total = active = 0
-
         if os.path.exists(USERS_FILE):
             with open(USERS_FILE) as f:
                 users = f.read().splitlines()
                 total = len(users)
-
             for uid in users:
                 try:
                     await context.bot.send_chat_action(int(uid), "typing")
@@ -159,7 +159,6 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await asyncio.sleep(0.03)
                 except:
                     pass
-
         await query.message.reply_text(
             f"📊 **Statistics**\n\n"
             f"👥 Total Users: {total}\n"
@@ -181,11 +180,9 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "broadcast_confirm":
         sent = failed = 0
         text = context.user_data.get("broadcast_text", "")
-
         if os.path.exists(USERS_FILE):
             with open(USERS_FILE) as f:
                 users = f.read().splitlines()
-
             for uid in users:
                 try:
                     await context.bot.send_message(int(uid), text)
@@ -195,7 +192,6 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     failed += 1
                 except:
                     failed += 1
-
         await query.message.reply_text(
             f"✅ **Broadcast Completed**\n\n"
             f"📤 Sent: {sent}\n"
@@ -212,17 +208,22 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 🎵 SONG SELECTION
     if data.startswith("song_"):
         index = int(data.split("_")[1])
-        entry = context.user_data["results"][index]
+        results = context.user_data.get("results")
+        if not results:
+            await query.message.reply_text("❌ Session expired. Please search again.")
+            return
+
+        entry = results[index]
+        status_msg = await query.message.reply_text("⏳ Downloading audio...")
 
         try:
             await query.message.delete()
         except:
             pass
 
-        # UPDATED: Added MP3 conversion settings here too
         ydl_opts = {
             "format": "bestaudio/best",
-            "outtmpl": "%(title)s.%(ext)s",
+            "outtmpl": "song_%(id)s.%(ext)s",
             "quiet": True,
             "postprocessors": [{
                 "key": "FFmpegExtractAudio",
@@ -231,36 +232,39 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             }]
         }
 
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(entry["webpage_url"], download=True)
-            await send_audio(query.message, info, ydl)
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(entry["webpage_url"], download=True)
+                await status_msg.delete()
+                await send_audio(query.message, info, ydl)
+        except Exception as e:
+            await status_msg.edit_text(f"❌ Download failed: {str(e)}")
 
 
 # ================= SEND AUDIO =================
 
 async def send_audio(message, info, ydl):
-    # UPDATED: Force filename to end with .mp3
-    original_path = ydl.prepare_filename(info)
-    file_path = os.path.splitext(original_path)[0] + ".mp3"
+    # This logic ensures we find the .mp3 file even if titles have weird characters
+    base_path = ydl.prepare_filename(info)
+    file_path = os.path.splitext(base_path)[0] + ".mp3"
 
-    await message.reply_text(
-        f"🎵 **{info.get('title')}**\n"
-        f"👤 {info.get('uploader')}\n"
-        f"⏱ Duration: {format_duration(info.get('duration'))}\n\n"
-        f"⬇️ Uploading to Telegram...",
-        parse_mode="Markdown"
-    )
+    try:
+        if not os.path.exists(file_path):
+            # Fallback check if outtmpl changed something
+            file_path = f"song_{info['id']}.mp3"
 
-    # Ensure the file exists before sending
-    if os.path.exists(file_path):
-        await message.reply_audio(
-            audio=open(file_path, "rb"),
-            title=info.get("title"),
-            performer=info.get("uploader")
-        )
-        os.remove(file_path)
-    else:
-        await message.reply_text("❌ Error: Audio conversion failed.")
+        if os.path.exists(file_path):
+            await message.reply_audio(
+                audio=open(file_path, "rb"),
+                title=info.get("title"),
+                performer=info.get("uploader"),
+                duration=int(info.get("duration", 0))
+            )
+            os.remove(file_path)
+        else:
+            await message.reply_text("❌ Error: File was not created properly.")
+    except Exception as e:
+        await message.reply_text(f"❌ Upload error: {str(e)}")
 
 
 # ================= ADMIN PANEL =================
