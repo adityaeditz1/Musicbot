@@ -7,12 +7,15 @@ from telegram.ext import (
     ContextTypes,
     filters
 )
+from telegram.error import Forbidden
 import yt_dlp
 import os
 import re
+import asyncio
 
-# BOT TOKEN from environment
 TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_ID = 1721427995
+USERS_FILE = "users.txt"
 
 
 def is_youtube_link(text: str) -> bool:
@@ -26,44 +29,81 @@ def format_duration(seconds: int) -> str:
     return f"{m}:{s:02d}"
 
 
-# 🔹 PROFESSIONAL START MESSAGE
+def save_user(user_id: int):
+    if not os.path.exists(USERS_FILE):
+        open(USERS_FILE, "w").close()
+
+    with open(USERS_FILE, "r+") as f:
+        users = f.read().splitlines()
+        if str(user_id) not in users:
+            f.write(str(user_id) + "\n")
+
+
+# ================= START =================
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    save_user(update.effective_user.id)
+
     await update.message.reply_text(
         "🎵 **Music Downloader Bot**\n\n"
         "Download high-quality audio directly from YouTube.\n\n"
         "**How to use:**\n"
         "• Send a song name → choose from results\n"
         "• Paste a YouTube link → instant download\n\n"
-        "Fast • Clean • Simple\n",
+        "Fast • Clean • Simple",
         parse_mode="Markdown"
     )
 
 
-async def song(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.message.text.strip()
+# ================= SONG HANDLER =================
 
-    # 🔍 Processing message (store it)
+async def song(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    # 🔔 ADMIN BROADCAST MESSAGE CAPTURE
+    if (
+        update.effective_user.id == ADMIN_ID
+        and context.user_data.get("awaiting_broadcast")
+    ):
+        context.user_data["broadcast_text"] = update.message.text
+        context.user_data["awaiting_broadcast"] = False
+
+        buttons = [[
+            InlineKeyboardButton("✅ Confirm", callback_data="broadcast_confirm"),
+            InlineKeyboardButton("❌ Cancel", callback_data="broadcast_cancel")
+        ]]
+
+        await update.message.reply_text(
+            "⚠️ **Confirm Broadcast**\n\n"
+            "This message will be sent to all active users.",
+            reply_markup=InlineKeyboardMarkup(buttons),
+            parse_mode="Markdown"
+        )
+        return
+
+    query = update.message.text.strip()
     processing_msg = await update.message.reply_text("🔍 Processing...")
 
+    # UPDATED: Added MP3 conversion settings
     ydl_opts = {
         "format": "bestaudio/best",
+        "outtmpl": "%(title)s.%(ext)s",
         "quiet": True,
-        "noplaylist": True
+        "noplaylist": True,
+        "postprocessors": [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "mp3",
+            "preferredquality": "192",
+        }]
     }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
 
-        # 🔗 DIRECT YOUTUBE LINK
         if is_youtube_link(query):
             info = ydl.extract_info(query, download=True)
-
-            # ❌ Remove processing
             await processing_msg.delete()
-
             await send_audio(update.message, info, ydl)
             return
 
-        # 🔍 SONG NAME SEARCH
         info = ydl.extract_info(f"ytsearch5:{query}", download=False)
 
         if not info.get("entries"):
@@ -77,82 +117,181 @@ async def song(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         buttons = []
         for i, entry in enumerate(info["entries"]):
-            title = entry.get("title", "Unknown Title")
             buttons.append([
-                InlineKeyboardButton(text=title, callback_data=str(i))
+                InlineKeyboardButton(entry.get("title", "Unknown"), callback_data=f"song_{i}")
             ])
 
-        # ❌ Remove processing before showing results
         await processing_msg.delete()
 
-        # 🎧 Result message (store for deletion later)
-        results_msg = await update.message.reply_text(
+        await update.message.reply_text(
             "🎧 **Select a song:**",
             reply_markup=InlineKeyboardMarkup(buttons),
             parse_mode="Markdown"
         )
 
-        context.user_data["results_msg_id"] = results_msg.message_id
 
+# ================= CALLBACK HANDLER (ALL CALLBACKS HERE) =================
 
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    index = int(query.data)
-    entry = context.user_data["results"][index]
+    data = query.data
 
-    ydl_opts = {
-        "format": "bestaudio/best",
-        "outtmpl": "%(title)s.%(ext)s",
-        "quiet": True
-    }
+    # 🔐 Admin only protection
+    if data.startswith("broadcast") or data == "stats":
+        if query.from_user.id != ADMIN_ID:
+            return
 
-    # ❌ Delete result list message
-    try:
-        await query.message.delete()
-    except:
-        pass
+    # 📊 STATISTICS
+    if data == "stats":
+        total = active = 0
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(entry["webpage_url"], download=True)
-        await send_audio(query.message, info, ydl)
+        if os.path.exists(USERS_FILE):
+            with open(USERS_FILE) as f:
+                users = f.read().splitlines()
+                total = len(users)
 
+            for uid in users:
+                try:
+                    await context.bot.send_chat_action(int(uid), "typing")
+                    active += 1
+                    await asyncio.sleep(0.03)
+                except:
+                    pass
+
+        await query.message.reply_text(
+            f"📊 **Statistics**\n\n"
+            f"👥 Total Users: {total}\n"
+            f"✅ Active Users: {active}",
+            parse_mode="Markdown"
+        )
+        return
+
+    # 📣 BROADCAST START
+    if data == "broadcast":
+        context.user_data["awaiting_broadcast"] = True
+        await query.message.reply_text(
+            "✍️ Send the broadcast message.\n"
+            "You will be asked to confirm before sending."
+        )
+        return
+
+    # ✅ BROADCAST CONFIRM
+    if data == "broadcast_confirm":
+        sent = failed = 0
+        text = context.user_data.get("broadcast_text", "")
+
+        if os.path.exists(USERS_FILE):
+            with open(USERS_FILE) as f:
+                users = f.read().splitlines()
+
+            for uid in users:
+                try:
+                    await context.bot.send_message(int(uid), text)
+                    sent += 1
+                    await asyncio.sleep(0.05)
+                except Forbidden:
+                    failed += 1
+                except:
+                    failed += 1
+
+        await query.message.reply_text(
+            f"✅ **Broadcast Completed**\n\n"
+            f"📤 Sent: {sent}\n"
+            f"❌ Failed: {failed}",
+            parse_mode="Markdown"
+        )
+        return
+
+    # ❌ BROADCAST CANCEL
+    if data == "broadcast_cancel":
+        await query.message.reply_text("❌ Broadcast cancelled.")
+        return
+
+    # 🎵 SONG SELECTION
+    if data.startswith("song_"):
+        index = int(data.split("_")[1])
+        entry = context.user_data["results"][index]
+
+        try:
+            await query.message.delete()
+        except:
+            pass
+
+        # UPDATED: Added MP3 conversion settings here too
+        ydl_opts = {
+            "format": "bestaudio/best",
+            "outtmpl": "%(title)s.%(ext)s",
+            "quiet": True,
+            "postprocessors": [{
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "192",
+            }]
+        }
+
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(entry["webpage_url"], download=True)
+            await send_audio(query.message, info, ydl)
+
+
+# ================= SEND AUDIO =================
 
 async def send_audio(message, info, ydl):
-    file_path = ydl.prepare_filename(info)
-
-    title = info.get("title", "Unknown Title")
-    artist = info.get("uploader", "Unknown Artist")
-    duration = format_duration(info.get("duration"))
+    # UPDATED: Force filename to end with .mp3
+    original_path = ydl.prepare_filename(info)
+    file_path = os.path.splitext(original_path)[0] + ".mp3"
 
     await message.reply_text(
-        f"🎵 **{title}**\n"
-        f"👤 {artist}\n"
-        f"⏱ Duration: {duration}\n\n"
-        f"⬇️ Downloading audio...",
+        f"🎵 **{info.get('title')}**\n"
+        f"👤 {info.get('uploader')}\n"
+        f"⏱ Duration: {format_duration(info.get('duration'))}\n\n"
+        f"⬇️ Uploading to Telegram...",
         parse_mode="Markdown"
     )
 
-    await message.reply_audio(
-        audio=open(file_path, "rb"),
-        title=title,
-        performer=artist
-    )
+    # Ensure the file exists before sending
+    if os.path.exists(file_path):
+        await message.reply_audio(
+            audio=open(file_path, "rb"),
+            title=info.get("title"),
+            performer=info.get("uploader")
+        )
+        os.remove(file_path)
+    else:
+        await message.reply_text("❌ Error: Audio conversion failed.")
 
-    os.remove(file_path)
 
+# ================= ADMIN PANEL =================
 
-def main():
-    if not TOKEN:
-        print("❌ BOT_TOKEN not set")
+async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
         return
 
+    buttons = [
+        [
+            InlineKeyboardButton("📊 Statistics", callback_data="stats"),
+            InlineKeyboardButton("📣 Broadcast", callback_data="broadcast")
+        ]
+    ]
+
+    await update.message.reply_text(
+        "🛠️ **Admin Panel**",
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode="Markdown"
+    )
+
+
+# ================= MAIN =================
+
+def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("admin", admin))
+    app.add_handler(CallbackQueryHandler(callback_router))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, song))
-    app.add_handler(CallbackQueryHandler(button_handler))
 
     print("Bot running...")
     app.run_polling()
@@ -160,3 +299,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
