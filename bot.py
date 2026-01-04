@@ -84,16 +84,22 @@ async def song(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.message.text.strip()
     processing_msg = await update.message.reply_text("🔍 Processing...")
 
+    # Options updated for Title, Artist and Thumbnail
     ydl_opts = {
         "format": "bestaudio/best",
         "quiet": True,
         "noplaylist": True,
-        "outtmpl": "song_%(id)s.%(ext)s",
-        "postprocessors": [{
-            "key": "FFmpegExtractAudio",
-            "preferredcodec": "mp3",
-            "preferredquality": "192",
-        }]
+        "outtmpl": "%(title)s.%(ext)s",
+        "writethumbnail": True,
+        "postprocessors": [
+            {
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "192",
+            },
+            {"key": "EmbedThumbnail"},
+            {"key": "FFmpegMetadata"},
+        ]
     }
 
     try:
@@ -223,13 +229,18 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         ydl_opts = {
             "format": "bestaudio/best",
-            "outtmpl": "song_%(id)s.%(ext)s",
+            "outtmpl": "%(title)s.%(ext)s",
             "quiet": True,
-            "postprocessors": [{
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "mp3",
-                "preferredquality": "192",
-            }]
+            "writethumbnail": True,
+            "postprocessors": [
+                {
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": "mp3",
+                    "preferredquality": "192",
+                },
+                {"key": "EmbedThumbnail"},
+                {"key": "FFmpegMetadata"},
+            ]
         }
 
         try:
@@ -244,21 +255,36 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= SEND AUDIO =================
 
 async def send_audio(message, info, ydl):
+    # This prepares the filename based on title
     base_path = ydl.prepare_filename(info)
     file_path = os.path.splitext(base_path)[0] + ".mp3"
+    thumb_path = os.path.splitext(base_path)[0] + ".jpg"
+    
+    # Fallback paths if above fails due to extension mismatch
+    if not os.path.exists(file_path):
+        file_path = f"{info['title']}.mp3"
+    if not os.path.exists(thumb_path):
+        thumb_path = f"{info['title']}.jpg"
 
     try:
-        if not os.path.exists(file_path):
-            file_path = f"song_{info['id']}.mp3"
-
         if os.path.exists(file_path):
+            # Send with title, performer and thumbnail
             await message.reply_audio(
                 audio=open(file_path, "rb"),
                 title=info.get("title"),
                 performer=info.get("uploader"),
-                duration=int(info.get("duration", 0))
+                duration=int(info.get("duration", 0)),
+                thumbnail=open(thumb_path, "rb") if os.path.exists(thumb_path) else None
             )
-            os.remove(file_path)
+            
+            # Clean up files
+            if os.path.exists(file_path): os.remove(file_path)
+            if os.path.exists(thumb_path): os.remove(thumb_path)
+            
+            # Clean up other potential extensions from thumbnails
+            for ext in [".webp", ".png", ".webp"]:
+                extra_thumb = os.path.splitext(base_path)[0] + ext
+                if os.path.exists(extra_thumb): os.remove(extra_thumb)
         else:
             await message.reply_text("❌ Error: Audio file creation failed.")
     except Exception as e:
