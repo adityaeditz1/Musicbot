@@ -7,7 +7,7 @@ from telegram.ext import (
     ContextTypes,
     filters
 )
-from telegram.error import Forbidden
+from telegram.error import Forbidden, BadRequest
 import yt_dlp
 import os
 import re
@@ -17,14 +17,15 @@ TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = 1721427995
 USERS_FILE = "users.txt"
 
-# 🔒 CHANNEL CONFIG
-CHANNEL_USERNAME = "@aditya_labs"
-CHANNEL_ID = -1003644491983
+# Force Subscribe Configuration
+FORCE_CHANNEL_USERNAME = "@aditya_labs" # Channel Username
+FORCE_CHANNEL_ID = -1003644491983 # Agar numeric ID fail ho to username use hoga. (Usually needs -100 prefix)
+# Note: Bot MUST be an Admin in this channel for it to work.
 
+# Railway handles paths automatically
 
 def is_youtube_link(text: str) -> bool:
     return bool(re.search(r"(youtube\.com|youtu\.be)", text))
-
 
 def format_duration(seconds: int) -> str:
     if not seconds:
@@ -32,68 +33,105 @@ def format_duration(seconds: int) -> str:
     m, s = divmod(seconds, 60)
     return f"{m}:{s:02d}"
 
-
 def save_user(user_id: int):
     if not os.path.exists(USERS_FILE):
         open(USERS_FILE, "w").close()
+
     with open(USERS_FILE, "r+") as f:
         users = f.read().splitlines()
         if str(user_id) not in users:
             f.write(str(user_id) + "\n")
 
+# ================= HELPER: CHECK SUBSCRIPTION =================
 
-# ================= CHANNEL CHECK =================
-
-async def is_user_joined(context, user_id: int) -> bool:
+async def check_membership(user_id: int, context: ContextTypes.DEFAULT_TYPE):
     try:
-        member = await context.bot.get_chat_member(CHANNEL_ID, user_id)
-        return member.status in ("member", "administrator", "creator")
-    except:
-        return False
-
-
-async def send_join_message(update: Update):
-    buttons = [
-        [InlineKeyboardButton("🔔 Join Channel", url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}")],
-        [InlineKeyboardButton("✅ I've Joined", callback_data="verify_join")]
-    ]
-    await update.message.reply_text(
-        "🔒 **Access Restricted**\n\nPlease join our official channel to use this bot.",
-        reply_markup=InlineKeyboardMarkup(buttons),
-        parse_mode="Markdown"
-    )
-
+        # Check using username (Most reliable for public channels)
+        member = await context.bot.get_chat_member(chat_id=FORCE_CHANNEL_USERNAME, user_id=user_id)
+        # Statuses that mean "Not Joined"
+        if member.status in ["left", "kicked"]:
+            return False
+        return True
+    except BadRequest:
+        # If username fails, try checking by ID or handle private channel error
+        try:
+            # Assuming the ID provided might need -100 prefix for channels
+            member = await context.bot.get_chat_member(chat_id=f"-100{3644491983}", user_id=user_id)
+            if member.status in ["left", "kicked"]:
+                return False
+            return True
+        except:
+            # If bot is not admin or channel invalid, default to True (Allow access to avoid blocking everyone)
+            print("Error checking membership. Make sure Bot is Admin in channel.")
+            return True
+    except Exception as e:
+        print(f"Membership check error: {e}")
+        return True
 
 # ================= START =================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    save_user(update.effective_user.id)
+    user_id = update.effective_user.id
+    save_user(user_id)
 
-    if not await is_user_joined(context, update.effective_user.id):
-        await send_join_message(update)
+    # 1. Check Membership
+    is_member = await check_membership(user_id, context)
+
+    # 2. If NOT a member, show "Access Restricted"
+    if not is_member:
+        buttons = [
+            [InlineKeyboardButton("🔔 Join Channel", url=f"https://t.me/{FORCE_CHANNEL_USERNAME.replace('@', '')}")],
+            [InlineKeyboardButton("✅ I've Joined", callback_data="check_subscription")]
+        ]
+        await update.message.reply_text(
+            "🔒 **Access Restricted**\n\n"
+            "Please join our official channel to use this bot.",
+            reply_markup=InlineKeyboardMarkup(buttons),
+            parse_mode="Markdown"
+        )
         return
 
-    await update.message.reply_text(
+    # 3. If Member, show normal Welcome Message
+    await show_main_menu(update, context)
+
+async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # This function sends the main menu (used in /start and after verification)
+    text = (
         "🎵 **Music Downloader Bot**\n\n"
         "Download high-quality audio directly from YouTube.\n\n"
         "**How to use:**\n"
         "• Send a song name → choose from results\n"
         "• Paste a YouTube link → instant download\n\n"
-        "Fast • Clean • Simple",
-        parse_mode="Markdown"
+        "Fast • Clean • Simple"
     )
+    
+    # Send as new message
+    if update.message:
+        await update.message.reply_text(text, parse_mode="Markdown")
+    # Or edit existing if calling from callback (optional logic, but here we usually send new)
+    elif update.callback_query:
+        await update.callback_query.message.reply_text(text, parse_mode="Markdown")
 
 
 # ================= SONG HANDLER =================
 
 async def song(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    if not await is_user_joined(context, update.effective_user.id):
-        await send_join_message(update)
+    user_id = update.effective_user.id
+    
+    # Check membership before downloading
+    if not await check_membership(user_id, context):
+        await update.message.reply_text(
+            "⚠️ You must join our channel to download songs.\n"
+            f"👉 {FORCE_CHANNEL_USERNAME}",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Verify Now", callback_data="check_subscription")]])
+        )
         return
 
-    # 🔔 ADMIN BROADCAST TEXT CAPTURE
-    if update.effective_user.id == ADMIN_ID and context.user_data.get("awaiting_broadcast"):
+    # 🔔 ADMIN BROADCAST MESSAGE CAPTURE
+    if (
+        update.effective_user.id == ADMIN_ID
+        and context.user_data.get("awaiting_broadcast")
+    ):
         context.user_data["broadcast_text"] = update.message.text
         context.user_data["awaiting_broadcast"] = False
 
@@ -103,7 +141,8 @@ async def song(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]]
 
         await update.message.reply_text(
-            "⚠️ **Confirm Broadcast**",
+            "⚠️ **Confirm Broadcast**\n\n"
+            "This message will be sent to all active users.",
             reply_markup=InlineKeyboardMarkup(buttons),
             parse_mode="Markdown"
         )
@@ -119,7 +158,11 @@ async def song(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "outtmpl": "%(title)s.%(ext)s",
         "writethumbnail": True,
         "postprocessors": [
-            {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"},
+            {
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "192",
+            },
             {"key": "EmbedThumbnail"},
             {"key": "FFmpegMetadata"},
         ]
@@ -134,17 +177,21 @@ async def song(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             info = ydl.extract_info(f"ytsearch5:{query}", download=False)
-            if not info.get("entries"):
+
+            if not info or not info.get("entries"):
                 await processing_msg.delete()
-                await update.message.reply_text("❌ No results found.")
+                await update.message.reply_text(
+                    "❌ No results found.\nPlease try a different song name."
+                )
                 return
 
             context.user_data["results"] = info["entries"]
 
-            buttons = [
-                [InlineKeyboardButton(e.get("title", "Unknown")[:40], callback_data=f"song_{i}")]
-                for i, e in enumerate(info["entries"])
-            ]
+            buttons = []
+            for i, entry in enumerate(info["entries"]):
+                buttons.append([
+                    InlineKeyboardButton(entry.get("title", "Unknown")[:40], callback_data=f"song_{i}")
+                ])
 
             await processing_msg.delete()
             await update.message.reply_text(
@@ -153,26 +200,58 @@ async def song(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown"
             )
     except Exception as e:
-        await processing_msg.delete()
-        await update.message.reply_text(f"❌ Error: {e}")
+        if processing_msg: await processing_msg.delete()
+        await update.message.reply_text(f"❌ An error occurred: {str(e)}")
 
 
 # ================= CALLBACK HANDLER =================
 
 async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    user_id = query.from_user.id
     data = query.data
+    
+    # Not answering query immediately for 'check_subscription' to allow flow control
+    if data != "check_subscription":
+        await query.answer()
 
-    # ✅ CHANNEL VERIFY
-    if data == "verify_join":
-        if await is_user_joined(context, query.from_user.id):
-            await query.message.edit_text("✅ **Verified!** You can now use the bot.")
+    # ✅ FORCE SUBSCRIBE VERIFICATION LOGIC
+    if data == "check_subscription":
+        is_member = await check_membership(user_id, context)
+        
+        if is_member:
+            # 1. Verification Successful
+            await query.answer("Verified!") # Small popup
+            try:
+                # Delete the "Access Restricted" message
+                await query.message.delete()
+            except:
+                pass # If message too old to delete
+            
+            # Send "Verified" confirmation
+            await query.message.reply_text("✅ **Verified!** You can now use the bot.", parse_mode="Markdown")
+            
+            # Show Main Menu
+            await show_main_menu(update, context)
+            
         else:
-            await query.answer("❌ Join channel first.", show_alert=True)
+            # 2. Verification Failed (Still not joined)
+            await query.answer("❌ Not Joined!", show_alert=True)
+            # Send message without deleting previous one (as requested)
+            await query.message.reply_text(
+                "❌ **You have not joined yet!**\n"
+                "Please join the channel first, then click 'I've Joined'.",
+                parse_mode="Markdown"
+            )
         return
 
-    # 📊 STATS
+
+    # 🔐 Admin only protection
+    if data.startswith("broadcast") or data == "stats":
+        if query.from_user.id != ADMIN_ID:
+            return
+
+    # 📊 STATISTICS
     if data == "stats":
         total = active = 0
         if os.path.exists(USERS_FILE):
@@ -186,9 +265,10 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await asyncio.sleep(0.03)
                 except:
                     pass
-
         await query.message.reply_text(
-            f"📊 **Statistics**\n\n👥 Total Users: {total}\n✅ Active Users: {active}",
+            f"📊 **Statistics**\n\n"
+            f"👥 Total Users: {total}\n"
+            f"✅ Active Users: {active}",
             parse_mode="Markdown"
         )
         return
@@ -196,46 +276,61 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 📣 BROADCAST START
     if data == "broadcast":
         context.user_data["awaiting_broadcast"] = True
-        await query.message.reply_text("✍️ Send broadcast message.")
+        await query.message.reply_text(
+            "✍️ Send the broadcast message.\n"
+            "You will be asked to confirm before sending."
+        )
         return
 
     # ✅ BROADCAST CONFIRM
     if data == "broadcast_confirm":
-        await query.message.delete()
-        text = context.user_data.get("broadcast_text", "")
         sent = failed = 0
-
+        text = context.user_data.get("broadcast_text", "")
         if os.path.exists(USERS_FILE):
             with open(USERS_FILE) as f:
                 users = f.read().splitlines()
-
             for uid in users:
                 try:
                     await context.bot.send_message(int(uid), text)
                     sent += 1
                     await asyncio.sleep(0.05)
+                except Forbidden:
+                    failed += 1
                 except:
                     failed += 1
-
-        await context.bot.send_message(
-            query.from_user.id,
-            f"✅ Broadcast done\n📤 Sent: {sent}\n❌ Failed: {failed}"
+        await query.message.reply_text(
+            f"✅ **Broadcast Completed**\n\n"
+            f"📤 Sent: {sent}\n"
+            f"❌ Failed: {failed}",
+            parse_mode="Markdown"
         )
         return
 
     # ❌ BROADCAST CANCEL
     if data == "broadcast_cancel":
-        await query.message.delete()
-        await context.bot.send_message(query.from_user.id, "❌ Broadcast cancelled.")
+        await query.message.reply_text("❌ Broadcast cancelled.")
         return
 
-    # 🎵 SONG SELECT
+    # 🎵 SONG SELECTION
     if data.startswith("song_"):
-        index = int(data.split("_")[1])
-        entry = context.user_data.get("results", [])[index]
+        # Double check membership before download starts
+        if not await check_membership(user_id, context):
+            await query.message.reply_text("⚠️ Please join the channel first.")
+            return
 
-        await query.message.delete()
-        downloading = await context.bot.send_message(query.from_user.id, "⏳ Downloading...")
+        index = int(data.split("_")[1])
+        results = context.user_data.get("results")
+        if not results:
+            await query.message.reply_text("❌ Session expired. Please search again.")
+            return
+
+        entry = results[index]
+        status_msg = await query.message.reply_text("⏳ Downloading audio...")
+
+        try:
+            await query.message.delete()
+        except:
+            pass
 
         ydl_opts = {
             "format": "bestaudio/best",
@@ -243,32 +338,57 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "quiet": True,
             "writethumbnail": True,
             "postprocessors": [
-                {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"},
+                {
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": "mp3",
+                    "preferredquality": "192",
+                },
                 {"key": "EmbedThumbnail"},
                 {"key": "FFmpegMetadata"},
             ]
         }
 
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(entry["webpage_url"], download=True)
-            await downloading.delete()
-            await send_audio(query.message, info, ydl)
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(entry["webpage_url"], download=True)
+                await status_msg.delete()
+                await send_audio(query.message, info, ydl)
+        except Exception as e:
+            await status_msg.edit_text(f"❌ Download failed: {str(e)}")
 
 
 # ================= SEND AUDIO =================
 
 async def send_audio(message, info, ydl):
-    base = ydl.prepare_filename(info)
-    mp3 = os.path.splitext(base)[0] + ".mp3"
+    base_path = ydl.prepare_filename(info)
+    file_path = os.path.splitext(base_path)[0] + ".mp3"
+    thumb_path = os.path.splitext(base_path)[0] + ".jpg"
+    
+    if not os.path.exists(file_path):
+        file_path = f"{info['title']}.mp3"
+    if not os.path.exists(thumb_path):
+        thumb_path = f"{info['title']}.jpg"
 
-    await message.reply_audio(
-        audio=open(mp3, "rb"),
-        title=info.get("title"),
-        performer=info.get("uploader"),
-        duration=int(info.get("duration", 0))
-    )
-
-    os.remove(mp3)
+    try:
+        if os.path.exists(file_path):
+            await message.reply_audio(
+                audio=open(file_path, "rb"),
+                title=info.get("title"),
+                performer=info.get("uploader"),
+                duration=int(info.get("duration", 0)),
+                thumbnail=open(thumb_path, "rb") if os.path.exists(thumb_path) else None
+            )
+            
+            if os.path.exists(file_path): os.remove(file_path)
+            if os.path.exists(thumb_path): os.remove(thumb_path)
+            
+            for ext in [".webp", ".png", ".webp"]:
+                extra_thumb = os.path.splitext(base_path)[0] + ext
+                if os.path.exists(extra_thumb): os.remove(extra_thumb)
+        else:
+            await message.reply_text("❌ Error: Audio file creation failed.")
+    except Exception as e:
+        await message.reply_text(f"❌ Upload error: {str(e)}")
 
 
 # ================= ADMIN PANEL =================
@@ -277,10 +397,12 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
 
-    buttons = [[
-        InlineKeyboardButton("📊 Statistics", callback_data="stats"),
-        InlineKeyboardButton("📣 Broadcast", callback_data="broadcast")
-    ]]
+    buttons = [
+        [
+            InlineKeyboardButton("📊 Statistics", callback_data="stats"),
+            InlineKeyboardButton("📣 Broadcast", callback_data="broadcast")
+        ]
+    ]
 
     await update.message.reply_text(
         "🛠️ **Admin Panel**",
@@ -293,13 +415,16 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin))
     app.add_handler(CallbackQueryHandler(callback_router))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, song))
-    print("Bot running...")
+
+    print("Bot running on Cloud with Force Sub...")
     app.run_polling()
 
 
 if __name__ == "__main__":
     main()
+
