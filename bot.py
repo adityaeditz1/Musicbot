@@ -21,14 +21,17 @@ USERS_FILE = "users.txt"
 CHANNEL_USERNAME = "@aditya_labs"
 CHANNEL_ID = -1003644491983
 
+
 def is_youtube_link(text: str) -> bool:
     return bool(re.search(r"(youtube\.com|youtu\.be)", text))
+
 
 def format_duration(seconds: int) -> str:
     if not seconds:
         return "Unknown"
     m, s = divmod(seconds, 60)
     return f"{m}:{s:02d}"
+
 
 def save_user(user_id: int):
     if not os.path.exists(USERS_FILE):
@@ -37,6 +40,7 @@ def save_user(user_id: int):
         users = f.read().splitlines()
         if str(user_id) not in users:
             f.write(str(user_id) + "\n")
+
 
 # ================= CHANNEL CHECK =================
 
@@ -47,17 +51,18 @@ async def is_user_joined(context, user_id: int) -> bool:
     except:
         return False
 
+
 async def send_join_message(update: Update):
     buttons = [
         [InlineKeyboardButton("🔔 Join Channel", url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}")],
         [InlineKeyboardButton("✅ I've Joined", callback_data="verify_join")]
     ]
     await update.message.reply_text(
-        "🔒 **Access Restricted**\n\n"
-        "Please join our official channel to use this bot.",
+        "🔒 **Access Restricted**\n\nPlease join our official channel to use this bot.",
         reply_markup=InlineKeyboardMarkup(buttons),
         parse_mode="Markdown"
     )
+
 
 # ================= START =================
 
@@ -78,6 +83,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
+
 # ================= SONG HANDLER =================
 
 async def song(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -86,11 +92,8 @@ async def song(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_join_message(update)
         return
 
-    # 🔔 ADMIN BROADCAST CAPTURE
-    if (
-        update.effective_user.id == ADMIN_ID
-        and context.user_data.get("awaiting_broadcast")
-    ):
+    # 🔔 ADMIN BROADCAST TEXT CAPTURE
+    if update.effective_user.id == ADMIN_ID and context.user_data.get("awaiting_broadcast"):
         context.user_data["broadcast_text"] = update.message.text
         context.user_data["awaiting_broadcast"] = False
 
@@ -153,6 +156,7 @@ async def song(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await processing_msg.delete()
         await update.message.reply_text(f"❌ Error: {e}")
 
+
 # ================= CALLBACK HANDLER =================
 
 async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -160,18 +164,78 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     data = query.data
 
+    # ✅ CHANNEL VERIFY
     if data == "verify_join":
         if await is_user_joined(context, query.from_user.id):
             await query.message.edit_text("✅ **Verified!** You can now use the bot.")
         else:
-            await query.answer("❌ Please join the channel first.", show_alert=True)
+            await query.answer("❌ Join channel first.", show_alert=True)
         return
 
+    # 📊 STATS
+    if data == "stats":
+        total = active = 0
+        if os.path.exists(USERS_FILE):
+            with open(USERS_FILE) as f:
+                users = f.read().splitlines()
+                total = len(users)
+            for uid in users:
+                try:
+                    await context.bot.send_chat_action(int(uid), "typing")
+                    active += 1
+                    await asyncio.sleep(0.03)
+                except:
+                    pass
+
+        await query.message.reply_text(
+            f"📊 **Statistics**\n\n👥 Total Users: {total}\n✅ Active Users: {active}",
+            parse_mode="Markdown"
+        )
+        return
+
+    # 📣 BROADCAST START
+    if data == "broadcast":
+        context.user_data["awaiting_broadcast"] = True
+        await query.message.reply_text("✍️ Send broadcast message.")
+        return
+
+    # ✅ BROADCAST CONFIRM
+    if data == "broadcast_confirm":
+        await query.message.delete()
+        text = context.user_data.get("broadcast_text", "")
+        sent = failed = 0
+
+        if os.path.exists(USERS_FILE):
+            with open(USERS_FILE) as f:
+                users = f.read().splitlines()
+
+            for uid in users:
+                try:
+                    await context.bot.send_message(int(uid), text)
+                    sent += 1
+                    await asyncio.sleep(0.05)
+                except:
+                    failed += 1
+
+        await context.bot.send_message(
+            query.from_user.id,
+            f"✅ Broadcast done\n📤 Sent: {sent}\n❌ Failed: {failed}"
+        )
+        return
+
+    # ❌ BROADCAST CANCEL
+    if data == "broadcast_cancel":
+        await query.message.delete()
+        await context.bot.send_message(query.from_user.id, "❌ Broadcast cancelled.")
+        return
+
+    # 🎵 SONG SELECT
     if data.startswith("song_"):
         index = int(data.split("_")[1])
         entry = context.user_data.get("results", [])[index]
 
         await query.message.delete()
+        downloading = await context.bot.send_message(query.from_user.id, "⏳ Downloading...")
 
         ydl_opts = {
             "format": "bestaudio/best",
@@ -187,7 +251,9 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(entry["webpage_url"], download=True)
+            await downloading.delete()
             await send_audio(query.message, info, ydl)
+
 
 # ================= SEND AUDIO =================
 
@@ -203,6 +269,7 @@ async def send_audio(message, info, ydl):
     )
 
     os.remove(mp3)
+
 
 # ================= ADMIN PANEL =================
 
@@ -221,6 +288,7 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
+
 # ================= MAIN =================
 
 def main():
@@ -231,6 +299,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, song))
     print("Bot running...")
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()
