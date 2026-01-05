@@ -285,6 +285,10 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ✅ BROADCAST CONFIRM
     if data == "broadcast_confirm":
+        try:
+            await query.message.delete()
+        except:
+            pass    
         sent = failed = 0
         text = context.user_data.get("broadcast_text", "")
         if os.path.exists(USERS_FILE):
@@ -305,11 +309,19 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"❌ Failed: {failed}",
             parse_mode="Markdown"
         )
+        context.user_data.pop("broadcast_text", None)
+        context.user_data.pop("awaiting_broadcast", None)
         return
 
     # ❌ BROADCAST CANCEL
     if data == "broadcast_cancel":
+        try:
+            await query.message.delete()
+        except:
+            pass    
         await query.message.reply_text("❌ Broadcast cancelled.")
+        context.user_data.pop("broadcast_text", None)
+        context.user_data.pop("awaiting_broadcast", None)
         return
 
     # 🎵 SONG SELECTION
