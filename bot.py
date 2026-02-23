@@ -22,7 +22,7 @@ ADMIN_ID = 1721427995
 FORCE_CHANNEL_USERNAME = "@aditya_labs"
 FORCE_CHANNEL_ID = -1003644491983
 
-DATABASE_URL = "postgresql://postgres:SMARTCHHOTU2006@db.epluuuabtkbknekreeqv.supabase.co:5432/postgres"
+DATABASE_URL = os.getenv("DATABASE_URL")
 db_pool = None
 BOT_ID = 3
 
