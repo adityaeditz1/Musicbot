@@ -7,6 +7,7 @@ from telegram.ext import (
     ContextTypes,
     filters
 )
+from telegram.error import Forbidden
 import yt_dlp
 import os
 import re
@@ -377,6 +378,9 @@ async def song(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "noplaylist": True,
         "outtmpl": "%(title)s.%(ext)s",
         "writethumbnail": True,
+        "http_headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        },
         "postprocessors": [
             {
                 "key": "FFmpegExtractAudio",
@@ -456,6 +460,14 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "outtmpl": "%(title)s.%(ext)s",
             "quiet": True,
             "writethumbnail": True,
+            "http_headers": {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+            },
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["android"]
+                }
+            },
             "postprocessors": [
                 {
                     "key": "FFmpegExtractAudio",
