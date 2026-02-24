@@ -373,7 +373,7 @@ async def song(update: Update, context: ContextTypes.DEFAULT_TYPE):
     processing_msg = await update.message.reply_text("🔍 Processing...")
 
     ydl_opts = {
-        "format": "bestaudio[ext=m4a]/bestaudio",,
+        "format": "bestaudio[ext=m4a]/bestaudio",
         "cookiefile": "cookies.txt",
         "quiet": True,
         "noplaylist": True,
