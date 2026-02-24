@@ -373,12 +373,17 @@ async def song(update: Update, context: ContextTypes.DEFAULT_TYPE):
     processing_msg = await update.message.reply_text("🔍 Processing...")
 
     ydl_opts = {
-        "format": "bestaudio[ext=m4a]/bestaudio",
+        "format": "bestaudio",
         "cookiefile": "cookies.txt",
         "quiet": True,
         "noplaylist": True,
         "outtmpl": "%(title)s.%(ext)s",
         "writethumbnail": True,
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["web"]
+            }
+        },
         "postprocessors": [
             {
                 "key": "FFmpegExtractAudio",
@@ -454,11 +459,16 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
         ydl_opts = {
-            "format": "bestaudio/best",
+            "format": "bestaudio",
             "cookiefile": "cookies.txt",
             "outtmpl": "%(title)s.%(ext)s",
             "quiet": True,
             "writethumbnail": True,
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["web"]
+                }
+            },
             "postprocessors": [
                 {
                     "key": "FFmpegExtractAudio",
