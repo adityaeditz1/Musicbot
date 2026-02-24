@@ -374,6 +374,7 @@ async def song(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     ydl_opts = {
         "format": "bestaudio/best",
+        "cookiefile": "cookies.txt",
         "quiet": True,
         "noplaylist": True,
         "outtmpl": "%(title)s.%(ext)s",
@@ -457,6 +458,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         ydl_opts = {
             "format": "bestaudio/best",
+            "cookiefile": "cookies.txt",
             "outtmpl": "%(title)s.%(ext)s",
             "quiet": True,
             "writethumbnail": True,
