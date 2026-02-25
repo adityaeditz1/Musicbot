@@ -381,8 +381,8 @@ async def song(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "cookiefile": "cookies.txt",
         "extractor_args": {
             "youtube": {
-                "player_client": ["ios", "web"],
-                "skip": ["dash", "hls"]
+                "player_client": ["web"],
+                "po_token": ["web+web_creator"]
             }
         },
         "postprocessors": [
@@ -467,8 +467,8 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "cookiefile": "cookies.txt",
             "extractor_args": {
                 "youtube": {
-                    "player_client": ["ios", "web"],
-                    "skip": ["dash", "hls"]
+                    "player_client": ["web"],
+                    "po_token": ["web+web_creator"]
                 }
             },
             "postprocessors": [
