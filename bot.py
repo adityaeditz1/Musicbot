@@ -254,7 +254,6 @@ async def admin_callback_router(update: Update, context: ContextTypes.DEFAULT_TY
 
     # ================= BROADCAST CONFIRM =================
     if data == "broadcast_confirm":
-        # delete confirm message
         try:
             await query.message.delete()
         except:
@@ -264,19 +263,32 @@ async def admin_callback_router(update: Update, context: ContextTypes.DEFAULT_TY
         text = context.user_data.get("broadcast_text", "")
 
         async with db_pool.acquire() as conn:
-
             rows = await conn.fetch(
                 """
-                SELECT u.user_id
-                FROM users u
-                JOIN user_bot_map m ON u.user_id = m.user_id
+                SELECT u.user_id 
+                FROM users u 
+                JOIN user_bot_map m ON u.user_id = m.user_id 
                 WHERE m.bot_id = $1 AND u.blocked = FALSE
                 """,
                 BOT_ID
             )
 
-            for r in rows:
+            total_users = len(rows)
+
+            # ✅ NOW send progress message (AFTER total_users defined)
+            progress_msg = await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=(
+                    f"<b>📡 Sending Broadcast...</b>\n\n"
+                    f"📤 Sent: 0 / {total_users}\n"
+                    f"❌ Failed: 0"
+                ),
+                parse_mode="HTML"
+            )
+
+            for index, r in enumerate(rows, start=1):
                 uid = r["user_id"]
+
                 try:
                     await context.bot.send_message(uid, text)
                     sent += 1
@@ -284,15 +296,30 @@ async def admin_callback_router(update: Update, context: ContextTypes.DEFAULT_TY
 
                 except Forbidden:
                     failed += 1
-                    # user ne bot block kar diya
                     await conn.execute(
-                    "UPDATE users SET blocked = TRUE WHERE user_id = $1",
-                    uid
+                        "UPDATE users SET blocked = TRUE WHERE user_id = $1",
+                        uid
                     )
 
                 except:
                     failed += 1
 
+                if index % 5 == 0 or index == total_users:
+                    try:
+                        await progress_msg.edit_text(
+                            f"<b>📡 Sending Broadcast...</b>\n\n"
+                            f"📤 Sent: {sent} / {total_users}\n"
+                            f"❌ Failed: {failed}",
+                            parse_mode="HTML"
+                        )
+                    except:
+                        pass
+
+        # ✅ DELETE AFTER LOOP (OUTSIDE LOOP)
+        try:
+            await progress_msg.delete()
+        except:
+            pass
 
         await context.bot.send_message(
             chat_id=query.message.chat_id,
