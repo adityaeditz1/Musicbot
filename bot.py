@@ -371,7 +371,7 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Store full message object info
     context.user_data["broadcast_message_id"] = update.message.message_id
     context.user_data["broadcast_chat_id"] = update.message.chat_id
-    context.user_data["is_forward"] =update.message.forward_from_chat is not None
+    context.user_data["is_forward"]=update.message.forward_origin is not None
 
     buttons = [
         [
