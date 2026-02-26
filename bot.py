@@ -260,9 +260,9 @@ async def admin_callback_router(update: Update, context: ContextTypes.DEFAULT_TY
             pass
 
         sent = failed = 0
-        text = context.user_data.get("broadcast_text", "")
 
         async with db_pool.acquire() as conn:
+
             rows = await conn.fetch(
                 """
                 SELECT u.user_id 
@@ -275,7 +275,6 @@ async def admin_callback_router(update: Update, context: ContextTypes.DEFAULT_TY
 
             total_users = len(rows)
 
-            # ✅ NOW send progress message (AFTER total_users defined)
             progress_msg = await context.bot.send_message(
                 chat_id=query.message.chat_id,
                 text=(
@@ -290,9 +289,22 @@ async def admin_callback_router(update: Update, context: ContextTypes.DEFAULT_TY
                 uid = r["user_id"]
 
                 try:
-                    await context.bot.send_message(uid, text)
+                    # Forward if message was forwarded
+                    if context.user_data.get("is_forward"):
+                        await context.bot.forward_message(
+                            chat_id=uid,
+                            from_chat_id=context.user_data["broadcast_chat_id"],
+                            message_id=context.user_data["broadcast_message_id"]
+                        )
+                    else:
+                        await context.bot.copy_message(
+                            chat_id=uid,
+                            from_chat_id=context.user_data["broadcast_chat_id"],
+                            message_id=context.user_data["broadcast_message_id"]
+                        )
+
                     sent += 1
-                    await asyncio.sleep(0.05)
+                    await asyncio.sleep(0.07)
 
                 except Forbidden:
                     failed += 1
@@ -304,6 +316,7 @@ async def admin_callback_router(update: Update, context: ContextTypes.DEFAULT_TY
                 except:
                     failed += 1
 
+                # 🔥 Proper progress update
                 if index % 5 == 0 or index == total_users:
                     try:
                         await progress_msg.edit_text(
@@ -315,7 +328,6 @@ async def admin_callback_router(update: Update, context: ContextTypes.DEFAULT_TY
                     except:
                         pass
 
-        # ✅ DELETE AFTER LOOP (OUTSIDE LOOP)
         try:
             await progress_msg.delete()
         except:
@@ -356,8 +368,10 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.user_data.get("awaiting_broadcast"):
         return
 
-    text = update.message.text
-    context.user_data["broadcast_text"] = text
+    # Store full message object info
+    context.user_data["broadcast_message_id"] = update.message.message_id
+    context.user_data["broadcast_chat_id"] = update.message.chat_id
+    context.user_data["is_forward"] =update.message.forward_from_chat is not None
 
     buttons = [
         [
@@ -367,8 +381,7 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
 
     await update.message.reply_text(
-        "⚠️ <b>Confirm Broadcast</b>\n\n"
-        f"{html.escape(text)}",
+        "⚠️ <b>Confirm Broadcast</b>\n\nThis message will be sent as it is.",
         reply_markup=InlineKeyboardMarkup(buttons),
         parse_mode="HTML"
     )
@@ -568,9 +581,10 @@ def main():
 
     register_core_panel(app)
 
-    app.add_handler(MessageHandler(
-    filters.TEXT & ~filters.COMMAND & filters.User(ADMIN_ID),
-    broadcast_message
+    app.add_handler(
+    MessageHandler(
+        ~filters.COMMAND & filters.User(ADMIN_ID),
+        broadcast_message
     ))
     
 
