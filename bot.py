@@ -418,12 +418,6 @@ async def song(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "noplaylist": True,
         "outtmpl": "%(title)s.%(ext)s",
         "writethumbnail": True,
-        "cookiefile": "cookies.txt",
-        "extractor_args": {
-            "youtube": {
-                "player_client": ["web"]
-            }
-        },
         "postprocessors": [
             {
                 "key": "FFmpegExtractAudio",
@@ -503,11 +497,6 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "outtmpl": "%(title)s.%(ext)s",
             "quiet": True,
             "writethumbnail": True,
-            "extractor_args": {
-                "youtube": {
-                    "player_client": ["web"]
-                }
-            },
             "postprocessors": [
                 {
                     "key": "FFmpegExtractAudio",
